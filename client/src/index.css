@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: #0A0A2E;
+  color: #fff;
+  font-family: 'Inter', system-ui, sans-serif;
+  margin: 0;
+}
+
+.font-jeopardy {
+  font-family: 'Anton', 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.cell-bevel {
+  background: linear-gradient(180deg, #060CE9 0%, #04099B 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.18),
+    inset 0 -3px 0 rgba(0,0,0,0.35),
+    0 2px 6px rgba(0,0,0,0.4);
+  transition: transform 0.08s ease, filter 0.15s ease;
+}
+.cell-bevel:hover:not(:disabled) {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+.cell-bevel:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.95);
+}
+
+@keyframes pulseWave {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1); }
+}
+.wave-bar {
+  display: inline-block;
+  width: 4px;
+  margin: 0 2px;
+  height: 24px;
+  background: #FFCC00;
+  border-radius: 2px;
+  animation: pulseWave 0.9s ease-in-out infinite;
+}
