@@ -27,9 +27,14 @@ export default function Game() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchGame(gameId)
+    fetchGame(gameId, { withResponses: mode === 'playalong' })
       .then((data) => {
         if (cancelled) return;
+        if (mode === 'playalong' && !data.responses) {
+          toast.error("This game's selection-order data isn't available; falling back to Board mode.");
+          dispatch({ type: 'INIT', gameData: data, mode: 'board' });
+          return;
+        }
         dispatch({ type: 'INIT', gameData: data, mode });
       })
       .catch((e) => {
@@ -72,6 +77,13 @@ export default function Game() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  // Play-along: when entering answer_reveal, also reveal real-game outcome
+  useEffect(() => {
+    if (state.mode === 'playalong' && state.phase === 'answer_reveal') {
+      dispatch({ type: 'PA_REVEAL_OUTCOME' });
+    }
+  }, [state.mode, state.phase]);
 
   // FJ ticker
   useEffect(() => {
@@ -249,6 +261,14 @@ export default function Game() {
       </div>
 
       <main className="flex-1 p-3 sm:p-6 max-w-6xl w-full mx-auto">
+        {state.mode === 'playalong' && (
+          <ContestantScoreboard state={state} />
+        )}
+
+        {state.phase === 'pa_highlight' && (
+          <PaHighlight state={state} dispatch={dispatch} />
+        )}
+
         {(state.phase === 'board' || state.phase === 'round_end') && (
           <>
             <Board
@@ -456,7 +476,9 @@ function ClueOverlay({ state, dispatch, onSubmit, clueSeconds }) {
 function AnswerReveal({ state, dispatch, autoAdvanceSeconds = 5 }) {
   const c = state.activeClue;
   const r = state.lastAnswerResult || {};
+  const pa = state.mode === 'playalong';
   useEffect(() => {
+    if (pa) return; // require explicit Next in play-along (showing contestant info)
     const t = setTimeout(() => dispatch({ type: 'NEXT_CLUE' }), autoAdvanceSeconds * 1000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -479,6 +501,9 @@ function AnswerReveal({ state, dispatch, autoAdvanceSeconds = 5 }) {
         <div className="text-white/70 mb-6">
           You said: <span className="italic">{state.userAnswer}</span>
         </div>
+      )}
+      {pa && state.paActiveResponse && (
+        <ContestantAttempts sel={state.paActiveResponse} />
       )}
       <div className="flex gap-3">
         {!r.correct && (
@@ -622,6 +647,169 @@ function FJReveal({ state, dispatch }) {
           See results
         </button>
       </div>
+    </div>
+  );
+}
+
+function ContestantScoreboard({ state }) {
+  const youLabel = 'You';
+  const all = [
+    ...state.contestants,
+    { name: youLabel, shortName: youLabel, score: state.score, you: true },
+  ];
+  const max = Math.max(1000, ...all.map((c) => Math.abs(c.score)));
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+      {all.map((c, i) => (
+        <div
+          key={i}
+          className={`rounded p-2 border ${
+            c.you ? 'border-jgold bg-jblueDark' : 'border-jblueDark bg-jblueDeep'
+          }`}
+        >
+          <div className="text-xs truncate text-white/80">
+            {c.you ? 'You' : c.shortName || c.name}
+          </div>
+          <div
+            className={`font-jeopardy text-xl ${
+              c.score < 0 ? 'text-jred' : 'text-jgold'
+            }`}
+          >
+            {c.score < 0 ? '-' : ''}${Math.abs(c.score).toLocaleString()}
+          </div>
+          <div className="h-1 bg-jblueDeep rounded mt-1 overflow-hidden">
+            <div
+              className={`h-full ${c.you ? 'bg-jgold' : 'bg-white/40'}`}
+              style={{ width: `${Math.max(2, (Math.max(c.score, 0) / max) * 100)}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PaHighlight({ state, dispatch }) {
+  const sel = state.paQueue[state.paIndex];
+  if (!sel || !state.gameData) return null;
+  const round =
+    sel.round === 'doubleJeopardy'
+      ? state.gameData.rounds.doubleJeopardy
+      : state.gameData.rounds.jeopardy;
+  const clue = round.clues.find((c) => c.id === sel.clueId);
+  const category = round.categories[sel.categoryIndex] || '';
+  const picker = sel.attempts[0]?.name || pickerFromPrevious(state) || 'Next';
+
+  useEffect(() => {
+    const t = setTimeout(() => dispatch({ type: 'PA_BEGIN_CLUE' }), 1600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.paIndex]);
+
+  // Build a faux board with this cell highlighted
+  return (
+    <div>
+      <div className="text-center mb-3 text-white/80">
+        <span className="font-jeopardy text-jgold text-lg">
+          {picker}
+        </span>{' '}
+        selects{' '}
+        <span className="font-jeopardy text-jgold">
+          {category}
+        </span>{' '}
+        for{' '}
+        <span className="font-jeopardy text-jgold">
+          ${clue?.value ?? sel.wager ?? ''}
+        </span>
+      </div>
+      <PaBoardHighlight round={round} sel={sel} revealedClues={state.revealedClues} />
+    </div>
+  );
+}
+
+function pickerFromPrevious(state) {
+  if (state.paIndex === 0) return null;
+  const prev = state.paQueue[state.paIndex - 1];
+  return prev?.correctBy || null;
+}
+
+function PaBoardHighlight({ round, sel, revealedClues }) {
+  const cats = round.categories;
+  const cluesByCol = {};
+  for (let c = 1; c <= 6; c++) cluesByCol[c] = [];
+  for (const clue of round.clues) cluesByCol[clue.categoryIndex + 1].push(clue);
+  for (let c = 1; c <= 6; c++) cluesByCol[c].sort((a, b) => a.row - b.row);
+
+  return (
+    <div className="grid grid-cols-6 gap-1 sm:gap-2 bg-jblueDeep p-2 rounded">
+      {cats.map((cat, i) => (
+        <div
+          key={`cat-${i}`}
+          className="cell-bevel min-h-[60px] sm:min-h-[90px] flex items-center justify-center text-center p-1 sm:p-2"
+        >
+          <span className="font-jeopardy text-white text-xs sm:text-base leading-tight">
+            {cat}
+          </span>
+        </div>
+      ))}
+      {[1, 2, 3, 4, 5].map((row) =>
+        [1, 2, 3, 4, 5, 6].map((col) => {
+          const clue = cluesByCol[col][row - 1];
+          if (!clue || !clue.text) {
+            return (
+              <div key={`empty-${row}-${col}`} className="bg-jblueDeep min-h-[60px] sm:min-h-[90px] rounded" />
+            );
+          }
+          const done = revealedClues.has(clue.id);
+          const isHighlight = clue.id === sel.clueId;
+          if (done && !isHighlight) {
+            return <div key={clue.id} className="bg-jblueDeep min-h-[60px] sm:min-h-[90px] rounded" />;
+          }
+          return (
+            <div
+              key={clue.id}
+              className={`min-h-[60px] sm:min-h-[90px] rounded font-jeopardy text-xl sm:text-3xl flex items-center justify-center ${
+                isHighlight
+                  ? 'bg-jgold text-jchrome animate-pulse ring-4 ring-jgold/60'
+                  : 'cell-bevel text-jgold'
+              }`}
+            >
+              ${clue.value}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function ContestantAttempts({ sel }) {
+  if (!sel) return null;
+  const responsesByName = {};
+  for (const r of sel.responses || []) responsesByName[r.name] = r.response;
+  return (
+    <div className="mt-2 mb-6 max-w-xl w-full bg-jblueDeep border border-jblueDark rounded p-3 text-sm">
+      <div className="text-xs uppercase text-white/50 mb-2">In the real game</div>
+      {sel.attempts.length === 0 && (
+        <div className="text-white/70">
+          {sel.isTripleStumper ? 'Triple stumper — no one rang in correctly.' : 'No buzz-in recorded.'}
+        </div>
+      )}
+      {sel.attempts.map((a, i) => (
+        <div key={i} className="flex justify-between gap-3 py-1 border-t border-jblueDark/40 first:border-0">
+          <span className={a.correct ? 'text-jgreen' : 'text-jred'}>
+            {a.correct ? '✓' : '✗'} {a.name}
+          </span>
+          {responsesByName[a.name] && (
+            <span className="italic text-white/70 truncate">
+              “{responsesByName[a.name]}”
+            </span>
+          )}
+        </div>
+      ))}
+      {sel.isTripleStumper && sel.attempts.length > 0 && (
+        <div className="mt-1 text-jred text-xs">Triple stumper.</div>
+      )}
     </div>
   );
 }

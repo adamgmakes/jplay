@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   scrapeGame,
   scrapeSeasonGameIds,
+  scrapeGameResponses,
 } from '../scraper/jArchive.js';
 
 const router = Router();
@@ -50,10 +51,33 @@ router.get('/:gameId', async (req, res) => {
   try {
     const game = await scrapeGame(id);
     if (!game) return res.status(404).json({ error: 'Game not found' });
+    if (req.query.include === 'responses' || req.query.responses === 'true') {
+      try {
+        const responses = await scrapeGameResponses(id);
+        if (responses) game.responses = responses;
+      } catch (e) {
+        console.warn('[responses] scrape failed', e.message);
+      }
+    }
     res.json(game);
   } catch (e) {
     console.error(e);
     res.status(502).json({ error: 'Failed to fetch game from J! Archive' });
+  }
+});
+
+router.get('/:gameId/responses', async (req, res) => {
+  const id = parseInt(req.params.gameId, 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid game id' });
+  }
+  try {
+    const data = await scrapeGameResponses(id);
+    if (!data) return res.status(404).json({ error: 'Responses not found' });
+    res.json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(502).json({ error: 'Failed to fetch responses' });
   }
 });
 

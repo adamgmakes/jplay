@@ -320,33 +320,210 @@ export async function scrapeSeasonList() {
   const html = await politeFetch(url);
   const $ = cheerio.load(html);
   const seasons = [];
-  $('table a[href*="listseason.php?season="]').each((i, el) => {
+  // J! Archive links seasons via showseason.php?season=<id> OR listseason.php?season=<id>
+  $('a[href*="season="]').each((i, el) => {
     const href = $(el).attr('href') || '';
-    const m = href.match(/season=([^&]+)/);
+    const m = href.match(/(?:show|list)season\.php\?season=([^&"]+)/);
     if (!m) return;
     const id = m[1];
+    if (seasons.find((s) => s.id === id)) return;
     const label = $(el).text().trim();
     const $row = $(el).closest('tr');
-    const yearText = $row.find('td').eq(1).text().trim();
-    seasons.push({ id, label, years: yearText });
+    const tds = $row.find('td');
+    const yearText = tds.length > 1 ? $(tds.get(1)).text().trim() : '';
+    seasons.push({ id, label: label || `Season ${id}`, years: yearText });
   });
   cache.set(key, seasons, 60 * 60 * 24 * 7);
   return seasons;
 }
 
-export async function scrapeSeasonGameIds(seasonId) {
-  const key = `season:${seasonId}:games`;
+export async function scrapeSeasonGames(seasonId) {
+  const key = `season:${seasonId}:gamesMeta`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const url = `${BASE}/listseason.php?season=${encodeURIComponent(seasonId)}`;
-  const html = await politeFetch(url);
+  // Try showseason first, then listseason as fallback
+  let html;
+  try {
+    html = await politeFetch(
+      `${BASE}/showseason.php?season=${encodeURIComponent(seasonId)}`
+    );
+  } catch (e) {
+    html = await politeFetch(
+      `${BASE}/listseason.php?season=${encodeURIComponent(seasonId)}`
+    );
+  }
   const $ = cheerio.load(html);
-  const ids = new Set();
+  const out = [];
+  const seen = new Set();
   $('a[href*="showgame.php?game_id="]').each((i, el) => {
-    const m = ($(el).attr('href') || '').match(/game_id=(\d+)/);
-    if (m) ids.add(parseInt(m[1], 10));
+    const href = $(el).attr('href') || '';
+    const m = href.match(/game_id=(\d+)/);
+    if (!m) return;
+    const id = parseInt(m[1], 10);
+    if (seen.has(id)) return;
+    seen.add(id);
+    const linkText = $(el).text().trim(); // e.g. "#1234"
+    const $row = $(el).closest('tr');
+    const rowText = $row.text().replace(/\s+/g, ' ').trim();
+    const dateMatch = rowText.match(
+      /(\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/
+    );
+    const contestants = rowText
+      .split(/ vs\.? /i)
+      .filter((p) => /[a-z]/i.test(p))
+      .slice(0, 3);
+    out.push({
+      gameId: id,
+      showLabel: linkText,
+      airDate: dateMatch ? dateMatch[1] : null,
+      rowText,
+      contestants:
+        contestants.length >= 2 && contestants.length <= 4
+          ? contestants.map((c) => c.replace(/^[^A-Za-z]+|[^A-Za-z\s]+$/g, '').trim())
+          : [],
+    });
   });
-  const arr = [...ids];
-  cache.set(key, arr, 60 * 60 * 24);
-  return arr;
+  cache.set(key, out, 60 * 60 * 24);
+  return out;
+}
+
+// Back-compat alias used by /api/game/random?season=
+export async function scrapeSeasonGameIds(seasonId) {
+  const games = await scrapeSeasonGames(seasonId);
+  return games.map((g) => g.gameId);
+}
+
+// Play-along data: order in which clues were selected and who responded.
+// Parses /showgameresponses.php?game_id=X — defensive against missing pieces.
+export async function scrapeGameResponses(gameId) {
+  const cacheKey = `responses:${gameId}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+  let html;
+  try {
+    html = await politeFetch(`${BASE}/showgameresponses.php?game_id=${gameId}`);
+  } catch (e) {
+    return null;
+  }
+  const $ = cheerio.load(html);
+  if (!$('#jeopardy_round').length && !$('#double_jeopardy_round').length) {
+    return null;
+  }
+
+  // Contestant nickname map: showgameresponses lists the contestants up top.
+  const contestants = [];
+  $('p.contestants a').each((i, el) => {
+    const full = $(el).text().trim();
+    if (!full) return;
+    contestants.push({ name: full, nickname: full.split(/\s+/)[0] });
+  });
+
+  function parseRoundResponses(roundSelector, roundKey) {
+    const $round = $(roundSelector);
+    if (!$round.length) return [];
+    const out = [];
+    $round.find('td.clue').each((i, el) => {
+      const $cell = $(el);
+      const $clueText = $cell.find('td.clue_text').first();
+      if (!$clueText.length) return;
+      const id = $clueText.attr('id') || '';
+      const idMatch = id.match(/^clue_(J|DJ|FJ)_(\d+)_(\d+)$/);
+      if (!idMatch) return;
+      const col = parseInt(idMatch[2], 10);
+      const row = parseInt(idMatch[3], 10);
+
+      // Clue order number is shown as a small number in the cell (often class="clue_order_number")
+      let order = null;
+      const $order = $cell.find('td.clue_order_number, .clue_order_number').first();
+      if ($order.length) {
+        const n = parseInt($order.text().trim(), 10);
+        if (!Number.isNaN(n)) order = n;
+      }
+
+      // Daily Double wager (shown in the clue text when applicable, format varies)
+      let wager = null;
+      const $valueDD = $cell.find('td.clue_value_daily_double').first();
+      if ($valueDD.length) {
+        const wm = $valueDD.text().match(/\$?([\d,]+)/);
+        if (wm) wager = parseInt(wm[1].replace(/,/g, ''), 10);
+      }
+
+      // Triple Stumper marker
+      const cellText = $cell.text();
+      const tripleStumper = /Triple\s*Stumper/i.test(cellText);
+
+      // Right / wrong attempts:
+      //   <td class="right">Chris</td>
+      //   <td class="wrong">Sidney</td>
+      const attempts = [];
+      $cell.find('td.right, td.wrong, .right, .wrong').each((j, ael) => {
+        const $a = $(ael);
+        const isRight = $a.hasClass('right');
+        const name = $a.text().trim();
+        if (!name) return;
+        if (name.length > 80) return; // safety
+        attempts.push({ name, correct: isRight });
+      });
+
+      // Parenthetical verbal responses, e.g. "(Sidney: What is Trump?)"
+      // We'll grab any "(Name: ...)" snippets and pair them with attempts by name.
+      const responses = [];
+      const rawHtml = $cell.html() || '';
+      const respRegex = /\(([A-Za-z][A-Za-z .'-]{0,40}):\s*([^()]+?)\)/g;
+      let m;
+      while ((m = respRegex.exec(rawHtml.replace(/<[^>]+>/g, ' '))) !== null) {
+        responses.push({ name: m[1].trim(), response: m[2].trim() });
+      }
+      const correctBy = attempts.find((a) => a.correct)?.name || null;
+
+      out.push({
+        clueId: id,
+        round: roundKey,
+        categoryIndex: col - 1,
+        row,
+        order,
+        wager,
+        attempts,
+        responses,
+        correctBy,
+        isTripleStumper: tripleStumper || (attempts.length > 0 && !correctBy),
+      });
+    });
+    return out;
+  }
+
+  const jeopardy = parseRoundResponses('#jeopardy_round', 'J');
+  const doubleJeopardy = parseRoundResponses('#double_jeopardy_round', 'DJ');
+
+  // Final Jeopardy responses are typically all 3 contestants with wagers
+  const finalJeopardy = (() => {
+    const $fj = $('#final_jeopardy_round');
+    if (!$fj.length) return null;
+    const attempts = [];
+    $fj.find('td.right, td.wrong, .right, .wrong').each((j, ael) => {
+      const $a = $(ael);
+      const isRight = $a.hasClass('right');
+      const name = $a.text().trim();
+      if (!name) return;
+      attempts.push({ name, correct: isRight, wager: null, response: null });
+    });
+    // wagers + responses are typically shown as "Name: $X,XXX" near the contestant names
+    const fjText = $fj.text();
+    attempts.forEach((a) => {
+      const wRe = new RegExp(
+        `${a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^$\\d]{0,40}\\$([\\d,]+)`
+      );
+      const wm = fjText.match(wRe);
+      if (wm) a.wager = parseInt(wm[1].replace(/,/g, ''), 10);
+    });
+    return { attempts };
+  })();
+
+  const data = {
+    gameId: Number(gameId),
+    contestants,
+    rounds: { jeopardy, doubleJeopardy, finalJeopardy },
+  };
+  cache.set(cacheKey, data);
+  return data;
 }

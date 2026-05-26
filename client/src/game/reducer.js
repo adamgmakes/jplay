@@ -14,13 +14,18 @@ export const initialState = {
   revealedClues: new Set(),
   categoryResults: {}, // { cat: { correct, incorrect } }
   activeClue: null,
-  phase: 'board', // board | clue_active | answer_input | answer_reveal | dd_wager | fj_category | fj_wager | fj_active | fj_reveal | round_end | game_over
+  phase: 'board', // board | clue_active | answer_input | answer_reveal | dd_wager | fj_category | fj_wager | fj_active | fj_reveal | round_end | game_over | pa_intro | pa_highlight
   userAnswer: '',
   lastAnswerResult: null,
   wager: 0,
   finalJeopardyWager: 0,
   finalJeopardyCorrect: null,
   sessionId: null,
+  // Play-Along extras
+  paQueue: [], // [{ clueId, round, order, attempts, correctBy, isTripleStumper, wager, responses }]
+  paIndex: 0,
+  contestants: [], // [{ name, score }]
+  paActiveResponse: null, // currently revealed real-game outcome for the active clue
 };
 
 function shuffle(arr) {
@@ -57,7 +62,6 @@ export function reducer(state, action) {
   switch (action.type) {
     case 'INIT': {
       const { gameData, mode } = action;
-      // Random mode: combine J + DJ into a queue
       const all = [
         ...gameData.rounds.jeopardy.clues,
         ...gameData.rounds.doubleJeopardy.clues,
@@ -67,6 +71,9 @@ export function reducer(state, action) {
       let activeClue = null;
       let currentRound = 'jeopardy';
       let wager = 0;
+      let paQueue = [];
+      let contestants = [];
+
       if (mode === 'random' && queue.length) {
         const firstId = queue[0];
         activeClue = all.find((c) => c.id === firstId) || null;
@@ -80,6 +87,33 @@ export function reducer(state, action) {
           }
         }
       }
+
+      if (mode === 'playalong') {
+        // Build queue from gameData.responses (selection order)
+        const r = gameData.responses;
+        const flat = [];
+        if (r) {
+          for (const sel of r.rounds.jeopardy || []) flat.push({ ...sel, round: 'jeopardy' });
+          for (const sel of r.rounds.doubleJeopardy || []) flat.push({ ...sel, round: 'doubleJeopardy' });
+        }
+        // Only clues that were actually played (have an order) — sorted by round then order
+        paQueue = flat
+          .filter((c) => c.order != null)
+          .sort((a, b) => {
+            if (a.round !== b.round) return a.round === 'jeopardy' ? -1 : 1;
+            return a.order - b.order;
+          });
+
+        // Initial contestants list (from game data)
+        contestants = (gameData.contestants || []).map((c) => ({
+          name: c.name,
+          shortName: (c.name || '').split(/\s+/)[0],
+          score: 0,
+        }));
+
+        phase = paQueue.length ? 'pa_highlight' : 'fj_category';
+      }
+
       return {
         ...initialState,
         gameData,
@@ -90,7 +124,55 @@ export function reducer(state, action) {
         activeClue,
         wager,
         phase,
+        paQueue,
+        paIndex: 0,
+        contestants,
       };
+    }
+
+    case 'PA_BEGIN_CLUE': {
+      // user has seen the highlight; show clue
+      const sel = state.paQueue[state.paIndex];
+      if (!sel) return state;
+      const round =
+        sel.round === 'doubleJeopardy'
+          ? state.gameData.rounds.doubleJeopardy
+          : state.gameData.rounds.jeopardy;
+      const clue = round.clues.find((c) => c.id === sel.clueId);
+      if (!clue) {
+        // skip if we can't locate
+        return { ...state, paIndex: state.paIndex + 1 };
+      }
+      const currentRound = sel.round;
+      if (clue.isDailyDouble) {
+        return {
+          ...state,
+          currentRound,
+          activeClue: clue,
+          phase: 'dd_wager',
+          wager: Math.max(state.score, currentRound === 'jeopardy' ? 1000 : 2000),
+        };
+      }
+      return { ...state, currentRound, activeClue: clue, phase: 'clue_active' };
+    }
+
+    case 'PA_REVEAL_OUTCOME': {
+      // After answer_reveal, attach the real-game outcome for display
+      const sel = state.paQueue[state.paIndex];
+      if (!sel) return state;
+      // Apply contestant score deltas based on real outcome
+      const newContestants = state.contestants.map((c) => {
+        const att = sel.attempts.find(
+          (a) =>
+            a.name === c.shortName ||
+            a.name === c.name ||
+            c.name.toLowerCase().startsWith(a.name.toLowerCase())
+        );
+        if (!att) return c;
+        const v = sel.wager != null ? sel.wager : (state.activeClue?.value || 0);
+        return { ...c, score: c.score + (att.correct ? v : -v) };
+      });
+      return { ...state, contestants: newContestants, paActiveResponse: sel };
     }
 
     case 'SELECT_CLUE': {
@@ -214,9 +296,28 @@ export function reducer(state, action) {
         activeClue: null,
         userAnswer: '',
         lastAnswerResult: null,
+        paActiveResponse: null,
         wager: 0,
         phase: 'board',
       };
+
+      // Play-along auto-advance
+      if (state.mode === 'playalong') {
+        const nextIdx = state.paIndex + 1;
+        if (nextIdx >= state.paQueue.length) {
+          return { ...nextState, paIndex: nextIdx, phase: 'fj_category' };
+        }
+        const nextSel = state.paQueue[nextIdx];
+        const transitionToDJ =
+          state.currentRound === 'jeopardy' && nextSel.round === 'doubleJeopardy';
+        return {
+          ...nextState,
+          paIndex: nextIdx,
+          currentRound: nextSel.round,
+          phase: transitionToDJ ? 'round_end' : 'pa_highlight',
+        };
+      }
+
       // Round transitions
       const tempState = { ...nextState };
       if (tempState.currentRound === 'jeopardy' && roundComplete(tempState)) {
@@ -257,7 +358,10 @@ export function reducer(state, action) {
     }
 
     case 'ADVANCE_FROM_ROUND_END':
-      return { ...state, phase: 'board' };
+      return {
+        ...state,
+        phase: state.mode === 'playalong' ? 'pa_highlight' : 'board',
+      };
 
     case 'SKIP_TO_FJ':
       return { ...state, phase: 'fj_category', activeClue: null, userAnswer: '' };

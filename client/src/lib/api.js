@@ -4,8 +4,10 @@ const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 export const api = axios.create({ baseURL, timeout: 30000 });
 
-export async function fetchGame(gameId) {
-  const { data } = await api.get(`/api/game/${gameId}`);
+export async function fetchGame(gameId, { withResponses = false } = {}) {
+  const { data } = await api.get(`/api/game/${gameId}`, {
+    params: withResponses ? { include: 'responses' } : {},
+  });
   return data;
 }
 
@@ -19,4 +21,11 @@ export async function fetchRandomGame(season) {
 export async function fetchSeasons() {
   const { data } = await api.get('/api/seasons');
   return data.seasons || [];
+}
+
+export async function fetchSeasonGames(seasonId) {
+  const { data } = await api.get(
+    `/api/seasons/${encodeURIComponent(seasonId)}/games`
+  );
+  return data.games || [];
 }
