@@ -104,12 +104,20 @@ export function reducer(state, action) {
             return a.order - b.order;
           });
 
-        // Initial contestants list (from game data)
-        contestants = (gameData.contestants || []).map((c) => ({
-          name: c.name,
-          shortName: (c.name || '').split(/\s+/)[0],
-          score: 0,
-        }));
+        // Initial contestants list (from game data) — dedupe by first-name token
+        const seenFirstNames = new Set();
+        contestants = (gameData.contestants || [])
+          .filter((c) => {
+            const first = (c.name || '').split(/\s+/)[0].toLowerCase();
+            if (!first || seenFirstNames.has(first)) return false;
+            seenFirstNames.add(first);
+            return true;
+          })
+          .map((c) => ({
+            name: c.name,
+            shortName: (c.name || '').split(/\s+/)[0],
+            score: 0,
+          }));
 
         phase = paQueue.length ? 'pa_highlight' : 'fj_category';
       }

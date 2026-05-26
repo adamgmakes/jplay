@@ -30,10 +30,18 @@ export default function Game() {
     fetchGame(gameId, { withResponses: mode === 'playalong' })
       .then((data) => {
         if (cancelled) return;
-        if (mode === 'playalong' && !data.responses) {
-          toast.error("This game's selection-order data isn't available; falling back to Board mode.");
-          dispatch({ type: 'INIT', gameData: data, mode: 'board' });
-          return;
+        if (mode === 'playalong') {
+          const r = data.responses;
+          const totalOrdered =
+            (r?.rounds?.jeopardy || []).filter((c) => c.order != null).length +
+            (r?.rounds?.doubleJeopardy || []).filter((c) => c.order != null).length;
+          if (!r || totalOrdered < 5) {
+            toast.error(
+              "This game's selection-order data isn't available; falling back to Board mode."
+            );
+            dispatch({ type: 'INIT', gameData: data, mode: 'board' });
+            return;
+          }
         }
         dispatch({ type: 'INIT', gameData: data, mode });
       })

@@ -223,9 +223,30 @@ function parseContestants($) {
     return { names, scores };
   }
 
+  function findContestant(name) {
+    if (!name) return null;
+    // Exact match
+    let c = contestants.find((x) => x.name === name);
+    if (c) return c;
+    // First-name token match (score tables often use first name only)
+    const first = name.toLowerCase().split(/\s+/)[0];
+    c = contestants.find(
+      (x) => x.name.toLowerCase().split(/\s+/)[0] === first
+    );
+    if (c) return c;
+    // Substring either direction
+    const lname = name.toLowerCase();
+    c = contestants.find(
+      (x) =>
+        x.name.toLowerCase().includes(lname) ||
+        lname.includes(x.name.toLowerCase().split(/\s+/)[0])
+    );
+    return c || null;
+  }
+
   function upsertScore(name, key, value) {
     if (!name) return;
-    let c = contestants.find((x) => x.name === name);
+    let c = findContestant(name);
     if (!c) {
       c = { name, finalScore: null, coryatScore: null };
       contestants.push(c);
@@ -432,12 +453,43 @@ export async function scrapeGameResponses(gameId) {
       const col = parseInt(idMatch[2], 10);
       const row = parseInt(idMatch[3], 10);
 
-      // Clue order number is shown as a small number in the cell (often class="clue_order_number")
+      // Clue order number: J! Archive renders this differently across eras.
+      // Try several strategies.
       let order = null;
-      const $order = $cell.find('td.clue_order_number, .clue_order_number').first();
-      if ($order.length) {
-        const n = parseInt($order.text().trim(), 10);
-        if (!Number.isNaN(n)) order = n;
+      const tryParse = (raw) => {
+        const t = (raw || '').trim();
+        if (!/^\d{1,2}$/.test(t)) return null;
+        const n = parseInt(t, 10);
+        return n >= 1 && n <= 30 ? n : null;
+      };
+      // 1) explicit class
+      const $orderTd = $cell.find('td.clue_order_number, .clue_order_number').first();
+      if ($orderTd.length) order = tryParse($orderTd.text());
+      // 2) sibling td of the clue_value (recent layout: value-on-left, number-on-right)
+      if (order == null) {
+        const $valueTd = $cell
+          .find('td.clue_value, td.clue_value_daily_double')
+          .first();
+        if ($valueTd.length) {
+          $valueTd
+            .parent()
+            .find('td')
+            .each((_, td) => {
+              if (order != null) return;
+              const o = tryParse($(td).text());
+              if (o != null && !$(td).is($valueTd)) order = o;
+            });
+        }
+      }
+      // 3) any 1-2 digit number bare-rendered inside the cell that isn't a dollar value
+      if (order == null) {
+        $cell.find('td, a, span').each((_, n) => {
+          if (order != null) return;
+          const txt = $(n).text().trim();
+          if (txt.startsWith('$')) return;
+          const o = tryParse(txt);
+          if (o != null) order = o;
+        });
       }
 
       // Daily Double wager (shown in the clue text when applicable, format varies)
