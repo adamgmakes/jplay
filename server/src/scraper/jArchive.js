@@ -187,50 +187,79 @@ function parseFinalJeopardy($) {
 
 function parseContestants($) {
   const contestants = [];
-  // names
+  // Names from the contestants paragraph at the top.
   $('p.contestants a').each((i, el) => {
     const name = $(el).text().trim();
     if (name) contestants.push({ name, finalScore: null, coryatScore: null });
   });
 
-  // final scores: table#final_scores or class final_scores
-  const $finalScores = $('table.final_scores, #final_scores').first();
-  if ($finalScores.length) {
+  // Anchor on the <h3> headings — J! Archive doesn't class the score tables.
+  function tableAfterHeading(rx) {
+    let $found = null;
+    $('h3').each((_, h) => {
+      if (rx.test($(h).text())) {
+        const $next = $(h).nextAll('table').first();
+        if ($next.length) {
+          $found = $next;
+          return false;
+        }
+      }
+    });
+    return $found;
+  }
+
+  function extract($table) {
     const names = [];
     const scores = [];
-    $finalScores.find('td.score_player_nickname').each((i, el) => {
+    $table.find('td.score_player_nickname').each((i, el) => {
       names.push($(el).text().trim());
     });
-    $finalScores.find('td.score_positive, td.score_negative').each((i, el) => {
+    $table.find('td.score_positive, td.score_negative').each((i, el) => {
       const t = $(el).text().trim();
       const neg = $(el).hasClass('score_negative');
       const v = parseInt(t.replace(/[^0-9]/g, ''), 10);
       if (!Number.isNaN(v)) scores.push(neg ? -v : v);
     });
-    names.forEach((n, i) => {
-      const c = contestants.find((x) => x.name === n);
-      if (c) c.finalScore = scores[i] ?? null;
-      else contestants.push({ name: n, finalScore: scores[i] ?? null, coryatScore: null });
-    });
+    return { names, scores };
   }
 
-  // coryat scores
-  const $coryat = $('table#coryat_scores, table.coryat_scores').first();
-  if ($coryat.length) {
-    const names = [];
-    const scores = [];
-    $coryat.find('td.score_player_nickname').each((i, el) => {
-      names.push($(el).text().trim());
+  function upsertScore(name, key, value) {
+    if (!name) return;
+    let c = contestants.find((x) => x.name === name);
+    if (!c) {
+      c = { name, finalScore: null, coryatScore: null };
+      contestants.push(c);
+    }
+    c[key] = value;
+  }
+
+  const $final = tableAfterHeading(/final\s+scores/i);
+  if ($final) {
+    const { names, scores } = extract($final);
+    names.forEach((n, i) => upsertScore(n, 'finalScore', scores[i] ?? null));
+  } else {
+    // Fallback: some older games omit the "Final scores:" heading. Use the
+    // last score table on the page that isn't the Coryat one.
+    const tables = [];
+    $('table').each((_, t) => {
+      const $t = $(t);
+      const isCoryat = /coryat/i.test(
+        $t.prev('h3').text() + ' ' + $t.prevAll('h3').first().text()
+      );
+      const hasScores = $t.find('td.score_positive, td.score_negative').length > 0;
+      const hasNames = $t.find('td.score_player_nickname').length > 0;
+      if (hasScores && hasNames && !isCoryat) tables.push($t);
     });
-    $coryat.find('td.score_positive, td.score_negative').each((i, el) => {
-      const t = $(el).text().trim();
-      const v = parseInt(t.replace(/[^0-9]/g, ''), 10);
-      if (!Number.isNaN(v)) scores.push(v);
-    });
-    names.forEach((n, i) => {
-      const c = contestants.find((x) => x.name === n);
-      if (c) c.coryatScore = scores[i] ?? null;
-    });
+    if (tables.length) {
+      const { names, scores } = extract(tables[tables.length - 1]);
+      names.forEach((n, i) => upsertScore(n, 'finalScore', scores[i] ?? null));
+    }
+  }
+
+  const $coryat = tableAfterHeading(/coryat/i);
+  if ($coryat) {
+    const { names, scores } = extract($coryat);
+    names.forEach((n, i) => upsertScore(n, 'coryatScore', scores[i] ?? null));
   }
 
   return contestants;

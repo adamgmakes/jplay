@@ -37,8 +37,8 @@ export default function Home() {
           <div className="text-sm text-white/70">games played on J! Play</div>
         </div>
         <div className="rounded-lg bg-jblueDeep border border-jblueDark p-4">
-          <div className="text-3xl font-jeopardy text-jgold">3</div>
-          <div className="text-sm text-white/70">play modes: board / random / voice</div>
+          <div className="text-3xl font-jeopardy text-jgold">2</div>
+          <div className="text-sm text-white/70">play modes: board / random</div>
         </div>
       </div>
 
