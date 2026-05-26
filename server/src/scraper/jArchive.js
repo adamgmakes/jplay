@@ -445,9 +445,25 @@ export async function scrapeGameResponses(gameId) {
     const out = [];
     $round.find('td.clue').each((i, el) => {
       const $cell = $(el);
-      const $clueText = $cell.find('td.clue_text').first();
-      if (!$clueText.length) return;
-      const id = $clueText.attr('id') || '';
+      // Find the clue id from any of several locations.
+      // showgame.php puts it on td.clue_text. showgameresponses.php puts it
+      // on the clue_unstuck cell as `clue_J_2_1_stuck`.
+      let id = null;
+      const $stuck = $cell.find('[id^="clue_"][id$="_stuck"]').first();
+      if ($stuck.length) {
+        id = ($stuck.attr('id') || '').replace(/_stuck$/, '');
+      }
+      if (!id) {
+        const $clueText = $cell.find('td.clue_text[id^="clue_"]').first();
+        if ($clueText.length) id = $clueText.attr('id');
+      }
+      if (!id) {
+        const $anyClueEl = $cell.find('[id^="clue_J_"], [id^="clue_DJ_"], [id^="clue_FJ_"]').first();
+        if ($anyClueEl.length) {
+          id = ($anyClueEl.attr('id') || '').replace(/_(stuck|r)$/, '');
+        }
+      }
+      if (!id) return;
       const idMatch = id.match(/^clue_(J|DJ|FJ)_(\d+)_(\d+)$/);
       if (!idMatch) return;
       const col = parseInt(idMatch[2], 10);
