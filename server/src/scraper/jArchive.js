@@ -16,12 +16,23 @@ async function politeFetch(url) {
   const wait = Math.max(0, lastRequestAt + MIN_INTERVAL_MS - now);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   lastRequestAt = Date.now();
-  const res = await axios.get(url, {
-    headers: { 'User-Agent': USER_AGENT },
-    timeout: 15000,
-    validateStatus: (s) => s >= 200 && s < 400,
-  });
-  return res.data;
+  console.log(`[scrape] GET ${url}`);
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      timeout: 10000,
+      maxRedirects: 5,
+      validateStatus: (s) => s >= 200 && s < 400,
+    });
+    console.log(`[scrape] OK ${url} (${res.data?.length || 0} bytes)`);
+    return res.data;
+  } catch (e) {
+    console.error(`[scrape] FAIL ${url}: ${e.code || ''} ${e.message}`);
+    throw e;
+  }
 }
 
 function stripHtml(html) {

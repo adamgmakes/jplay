@@ -10,14 +10,23 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:5173';
 
-app.use(helmet());
-app.use(express.json());
+const origins = ALLOWED_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+console.log('[jplay-server] allowed origins:', origins);
+
 app.use(
   cors({
-    origin: ALLOWED_ORIGIN.split(',').map((o) => o.trim()),
+    origin: (origin, cb) => {
+      // allow same-origin / curl / health probes (no origin header)
+      if (!origin) return cb(null, true);
+      if (origins.includes(origin)) return cb(null, true);
+      console.warn('[cors] rejected origin', origin);
+      return cb(new Error('CORS: origin not allowed'));
+    },
     credentials: true,
   })
 );
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(express.json());
 
 const gameLimiter = rateLimit({
   windowMs: 60 * 1000,

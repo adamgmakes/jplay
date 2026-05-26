@@ -253,9 +253,30 @@ export default function Game() {
 
   return (
     <div className="min-h-screen bg-jblue flex flex-col">
-      <div className="bg-jchrome px-4 py-2 flex justify-between items-center border-b border-jblueDark">
-        <div className="font-jeopardy text-jgold text-xl">J! PLAY</div>
-        <div className="text-sm text-white/70">
+      <div className="bg-jchrome px-4 py-2 flex justify-between items-center border-b border-jblueDark gap-3">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              const progressed =
+                state.cluesCorrect + state.cluesIncorrect + state.cluesTimedOut > 0;
+              if (
+                progressed &&
+                !window.confirm('Exit this game? Your progress will be lost.')
+              ) {
+                return;
+              }
+              cancelSpeak();
+              tickerRef.current?.stop();
+              nav('/play');
+            }}
+            title="Exit game"
+            className="text-white/70 hover:text-jgold text-sm border border-jblueDark rounded px-2 py-1"
+          >
+            ← Exit
+          </button>
+          <div className="font-jeopardy text-jgold text-xl">J! PLAY</div>
+        </div>
+        <div className="text-sm text-white/70 hidden sm:block">
           {state.gameData.airDate
             ? `Aired ${state.gameData.airDate}`
             : `Game #${state.gameData.gameId}`}{' '}
