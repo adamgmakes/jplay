@@ -116,11 +116,6 @@ function parseRound($, roundSelector, roundKey, gameAirDateYear) {
     const row = parseInt(idMatch[3], 10);
 
     const isDailyDouble = $cell.find('td.clue_value_daily_double').length > 0;
-    const valueText =
-      $cell.find('td.clue_value').first().text() ||
-      $cell.find('td.clue_value_daily_double').first().text();
-    let value = parseValueText(valueText);
-    if (value == null) value = defaultValuesFor(roundKey, row);
 
     // Daily Double wager (parsed from "DD: $X,XXX")
     let ddWager = null;
@@ -128,6 +123,17 @@ function parseRound($, roundSelector, roundKey, gameAirDateYear) {
       const ddText = $cell.find('td.clue_value_daily_double').first().text();
       const m = ddText.match(/\$([\d,]+)/);
       if (m) ddWager = parseInt(m[1].replace(/,/g, ''), 10);
+    }
+
+    // Positional clue value (NEVER parse from clue_value_daily_double — that
+    // would leak the DD wager into the board cell value).
+    let value;
+    if (isDailyDouble) {
+      value = defaultValuesFor(roundKey, row);
+    } else {
+      const valueText = $cell.find('td.clue_value').first().text();
+      value = parseValueText(valueText);
+      if (value == null) value = defaultValuesFor(roundKey, row);
     }
 
     const rawText = $clueText.html() || '';
