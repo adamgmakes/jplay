@@ -9,6 +9,7 @@ import Leaderboard from './pages/Leaderboard.jsx';
 import Account from './pages/Account.jsx';
 import Auth from './pages/Auth.jsx';
 import Settings from './pages/Settings.jsx';
+import MuteButton from './components/MuteButton.jsx';
 
 function Nav() {
   const { user, profile, signOut } = useAuth();
@@ -21,6 +22,7 @@ function Nav() {
         <Link to="/play" className="hover:text-jgold">Play</Link>
         <Link to="/leaderboard" className="hover:text-jgold">Leaderboard</Link>
         <Link to="/settings" className="hover:text-jgold">Settings</Link>
+        <MuteButton />
         {user ? (
           <>
             <Link to="/account" className="hover:text-jgold">

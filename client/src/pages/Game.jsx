@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../lib/auth.jsx';
 import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
+import MuteButton from '../components/MuteButton.jsx';
 import { loadSettings } from '../lib/settings.js';
 
 export default function Game() {
@@ -81,6 +82,8 @@ export default function Game() {
   useEffect(() => {
     function onKey(e) {
       const isSpace = e.code === 'Space' || e.key === ' ';
+      // Block all game-driving keys while the tutorial modal is up
+      if (showPaTutorial) return;
       if (state.phase === 'clue_active' && isSpace) {
         e.preventDefault();
         dispatch({ type: 'BUZZ_IN' });
@@ -284,8 +287,11 @@ export default function Game() {
             : `Game #${state.gameData.gameId}`}{' '}
           · {state.currentRound === 'jeopardy' ? 'Jeopardy' : state.currentRound === 'doubleJeopardy' ? 'Double Jeopardy' : 'Final Jeopardy'}
         </div>
-        <div className="font-jeopardy text-jgold text-xl">
-          {state.score < 0 ? '-' : ''}${Math.abs(state.score).toLocaleString()}
+        <div className="flex items-center gap-2">
+          <MuteButton />
+          <div className="font-jeopardy text-jgold text-xl">
+            {state.score < 0 ? '-' : ''}${Math.abs(state.score).toLocaleString()}
+          </div>
         </div>
       </div>
 
@@ -301,6 +307,7 @@ export default function Game() {
             state={state}
             dispatch={dispatch}
             seconds={settings.paHighlightSeconds}
+            paused={showPaTutorial}
           />
         )}
 
@@ -740,7 +747,7 @@ function ContestantScoreboard({ state }) {
   );
 }
 
-function PaHighlight({ state, dispatch, seconds = 5 }) {
+function PaHighlight({ state, dispatch, seconds = 5, paused = false }) {
   const sel = state.paQueue[state.paIndex];
   if (!sel || !state.gameData) return null;
   const round =
@@ -752,10 +759,11 @@ function PaHighlight({ state, dispatch, seconds = 5 }) {
   const picker = sel.attempts[0]?.name || pickerFromPrevious(state) || 'Next';
 
   useEffect(() => {
+    if (paused) return;
     const t = setTimeout(() => dispatch({ type: 'PA_BEGIN_CLUE' }), seconds * 1000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.paIndex, seconds]);
+  }, [state.paIndex, seconds, paused]);
 
   // Build a faux board with this cell highlighted
   return (

@@ -1,7 +1,10 @@
+import { isMuted } from '../lib/mute.js';
+
 let ctx = null;
 
 function getCtx() {
   if (typeof window === 'undefined') return null;
+  if (isMuted()) return null;
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
@@ -11,6 +14,7 @@ function getCtx() {
 }
 
 export function tick(freq = 880) {
+  if (isMuted()) return;
   const c = getCtx();
   if (!c) return;
   const o = c.createOscillator();
@@ -26,6 +30,7 @@ export function tick(freq = 880) {
 }
 
 export function ding(correct = true) {
+  if (isMuted()) return;
   const c = getCtx();
   if (!c) return;
   const o = c.createOscillator();
