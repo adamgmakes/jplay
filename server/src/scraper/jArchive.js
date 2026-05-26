@@ -122,18 +122,26 @@ function parseRound($, roundSelector, roundKey, gameAirDateYear) {
     let value = parseValueText(valueText);
     if (value == null) value = defaultValuesFor(roundKey, row);
 
+    // Daily Double wager (parsed from "DD: $X,XXX")
+    let ddWager = null;
+    if (isDailyDouble) {
+      const ddText = $cell.find('td.clue_value_daily_double').first().text();
+      const m = ddText.match(/\$([\d,]+)/);
+      if (m) ddWager = parseInt(m[1].replace(/,/g, ''), 10);
+    }
+
     const rawText = $clueText.html() || '';
     const text = stripHtml(rawText);
 
-    // Answer is in the second clue_text (with _r suffix) or in mouseover
-    let answer = null;
+    // Response cell holds answer + right/wrong contestants + verbal responses
     const $resp = $cell.find(`#clue_${roundKey}_${col}_${row}_r`).first();
+
+    let answer = null;
     if ($resp.length) {
       const $correct = $resp.find('em.correct_response').first();
       if ($correct.length) answer = stripHtml($correct.html());
     }
     if (!answer) {
-      // older games stash it in onmouseover
       const onmouseover = $cell.find('div[onmouseover]').attr('onmouseover');
       if (onmouseover) {
         const m = onmouseover.match(
@@ -142,6 +150,43 @@ function parseRound($, roundSelector, roundKey, gameAirDateYear) {
         if (m) answer = stripHtml(m[1]);
       }
     }
+
+    // Clue order number (selection order on the real show)
+    let order = null;
+    const $orderTd = $cell.find('td.clue_order_number').first();
+    if ($orderTd.length) {
+      const n = parseInt($orderTd.text().trim(), 10);
+      if (!Number.isNaN(n) && n >= 1 && n <= 60) order = n;
+    }
+
+    // Right/wrong contestants (Triple Stumper marker filtered)
+    const attempts = [];
+    if ($resp.length) {
+      $resp.find('td.right, td.wrong').each((j, ael) => {
+        const $a = $(ael);
+        const name = $a.text().trim();
+        if (!name || name.length > 80) return;
+        if (/^triple\s+stumper$/i.test(name)) return;
+        attempts.push({ name, correct: $a.hasClass('right') });
+      });
+    }
+
+    const respText = $resp.length ? $resp.text() : '';
+    const isTripleStumper =
+      /triple\s+stumper/i.test(respText) ||
+      (attempts.length > 0 && !attempts.some((a) => a.correct));
+
+    // Verbal parenthetical responses, e.g. "(Tristan: Who are the Maya?)"
+    const responses = [];
+    if ($resp.length) {
+      const stripped = ($resp.html() || '').replace(/<[^>]+>/g, ' ');
+      const re = /\(([A-Za-z][A-Za-z .'-]{0,40}):\s*([^()]+?)\)/g;
+      let m;
+      while ((m = re.exec(stripped)) !== null) {
+        responses.push({ name: m[1].trim(), response: m[2].trim() });
+      }
+    }
+    const correctBy = attempts.find((a) => a.correct)?.name || null;
 
     const unrevealed = /\[unrevealed\]/i.test(rawText) || !text;
 
@@ -155,6 +200,13 @@ function parseRound($, roundSelector, roundKey, gameAirDateYear) {
       answer: answer || null,
       isDailyDouble,
       isRevealed: false,
+      // Selection-order metadata (always present; null if game lacks data)
+      order,
+      ddWager,
+      attempts,
+      responses,
+      correctBy,
+      isTripleStumper,
     });
   });
 
@@ -182,7 +234,46 @@ function parseFinalJeopardy($) {
       if (m) answer = stripHtml(m[1]);
     }
   }
-  return { category, clue: { text: text || null, answer: answer || null } };
+
+  // FJ attempts: each contestant has a name (right/wrong td), a response,
+  // and a wager. They appear in a small table within #clue_FJ_r.
+  const attempts = [];
+  if ($resp.length) {
+    const rows = [];
+    $resp.find('table tr').each((i, tr) => {
+      rows.push($(tr));
+    });
+    // Pair name/response rows with the following wager row.
+    for (let i = 0; i < rows.length; i++) {
+      const $r = rows[i];
+      const $nameCell = $r.find('td.right, td.wrong').first();
+      if (!$nameCell.length) continue;
+      const name = $nameCell.text().trim();
+      if (!name || /^triple\s+stumper$/i.test(name)) continue;
+      const responseCell = $r.find('td[rowspan]').first();
+      const response = responseCell.length ? responseCell.text().trim() : null;
+      let wager = null;
+      // Wager is in the very next row, single td with "$X,XXX"
+      const $next = rows[i + 1];
+      if ($next) {
+        const wt = $next.text().trim();
+        const wm = wt.match(/\$?([\d,]+)/);
+        if (wm) wager = parseInt(wm[1].replace(/,/g, ''), 10);
+      }
+      attempts.push({
+        name,
+        correct: $nameCell.hasClass('right'),
+        response,
+        wager,
+      });
+    }
+  }
+
+  return {
+    category,
+    clue: { text: text || null, answer: answer || null },
+    attempts,
+  };
 }
 
 function parseContestants($) {
@@ -323,13 +414,53 @@ export async function scrapeGame(gameId) {
       finalJeopardy: finalJeopardy || {
         category: null,
         clue: { text: null, answer: null },
+        attempts: [],
       },
     },
     contestants,
+    // Pre-built responses payload (play-along) derived from the same HTML.
+    responses: buildResponsesFromGame({
+      gameId,
+      contestants,
+      jeopardy,
+      doubleJeopardy,
+      finalJeopardy,
+    }),
   };
 
   cache.set(key, data);
   return data;
+}
+
+function buildResponsesFromGame({ gameId, contestants, jeopardy, doubleJeopardy, finalJeopardy }) {
+  function pluckSel(c, roundKey) {
+    return {
+      clueId: c.id,
+      round: roundKey,
+      categoryIndex: c.categoryIndex,
+      row: c.row,
+      order: c.order,
+      wager: c.ddWager,
+      attempts: c.attempts || [],
+      responses: c.responses || [],
+      correctBy: c.correctBy,
+      isTripleStumper: !!c.isTripleStumper,
+    };
+  }
+  return {
+    gameId: Number(gameId),
+    contestants: (contestants || []).map((c) => ({
+      name: c.name,
+      nickname: (c.name || '').split(/\s+/)[0],
+    })),
+    rounds: {
+      jeopardy: (jeopardy?.clues || []).map((c) => pluckSel(c, 'J')),
+      doubleJeopardy: (doubleJeopardy?.clues || []).map((c) => pluckSel(c, 'DJ')),
+      finalJeopardy: finalJeopardy
+        ? { attempts: finalJeopardy.attempts || [] }
+        : null,
+    },
+  };
 }
 
 export async function scrapeSeasonList() {
@@ -414,9 +545,17 @@ export async function scrapeSeasonGameIds(seasonId) {
   return games.map((g) => g.gameId);
 }
 
-// Play-along data: order in which clues were selected and who responded.
-// Parses /showgameresponses.php?game_id=X — defensive against missing pieces.
+// Returns the play-along payload built off the main game scrape.
+// (Previously this fetched /showgameresponses.php separately, but all the
+// data we need is already in /showgame.php.)
 export async function scrapeGameResponses(gameId) {
+  const game = await scrapeGame(gameId);
+  if (!game) return null;
+  return game.responses || null;
+}
+
+// Legacy entry point retained for parity; unused by routes now.
+async function _scrapeGameResponsesFromResponsesPage(gameId) {
   const cacheKey = `responses:${gameId}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
@@ -476,7 +615,8 @@ export async function scrapeGameResponses(gameId) {
         const t = (raw || '').trim();
         if (!/^\d{1,2}$/.test(t)) return null;
         const n = parseInt(t, 10);
-        return n >= 1 && n <= 30 ? n : null;
+        // J round orders 1-30, DJ round 31-60 (cumulative). Allow both.
+        return n >= 1 && n <= 60 ? n : null;
       };
       // 1) explicit class
       const $orderTd = $cell.find('td.clue_order_number, .clue_order_number').first();

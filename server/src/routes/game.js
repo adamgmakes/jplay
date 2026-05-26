@@ -51,14 +51,6 @@ router.get('/:gameId', async (req, res) => {
   try {
     const game = await scrapeGame(id);
     if (!game) return res.status(404).json({ error: 'Game not found' });
-    if (req.query.include === 'responses' || req.query.responses === 'true') {
-      try {
-        const responses = await scrapeGameResponses(id);
-        if (responses) game.responses = responses;
-      } catch (e) {
-        console.warn('[responses] scrape failed', e.message);
-      }
-    }
     res.json(game);
   } catch (e) {
     console.error(e);
