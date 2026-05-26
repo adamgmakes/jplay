@@ -6,7 +6,6 @@ import { fetchRandomGame, fetchSeasons } from '../lib/api.js';
 const MODES = [
   { id: 'board', label: 'Board Mode', desc: 'The classic. Pick clues off the board, one round at a time.' },
   { id: 'random', label: 'Random Clue Mode', desc: 'Clues are served in random order. No strategy, just speed.' },
-  { id: 'voice', label: 'Voice Mode', desc: 'Clues are read aloud. Buzz in with the spacebar and answer out loud.' },
 ];
 
 export default function Play() {
@@ -55,7 +54,7 @@ export default function Play() {
 
       <section className="mt-8">
         <h3 className="uppercase text-xs tracking-widest text-white/60 mb-2">Mode</h3>
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 gap-3">
           {MODES.map((m) => (
             <button
               key={m.id}

@@ -5,7 +5,6 @@ import { fetchGame } from '../lib/api.js';
 import { reducer, initialState } from '../game/reducer.js';
 import { checkAnswer } from '../game/answer.js';
 import { ding, FinalJeopardyTicker } from '../game/audio.js';
-import { speak, cancelSpeak, recognizerSupported, createRecognizer } from '../game/voice.js';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../lib/auth.jsx';
 import Board from '../components/Board.jsx';
@@ -23,8 +22,6 @@ export default function Game() {
   const settings = useMemo(() => loadSettings(), []);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  const [voiceListening, setVoiceListening] = useState(false);
-  const recognizerRef = useRef(null);
   const tickerRef = useRef(null);
 
   useEffect(() => {
@@ -56,8 +53,6 @@ export default function Game() {
       if (state.phase === 'clue_active' && isSpace) {
         e.preventDefault();
         dispatch({ type: 'BUZZ_IN' });
-        cancelSpeak();
-        if (mode === 'voice') startListening();
       } else if (state.phase === 'answer_reveal' && isSpace) {
         e.preventDefault();
         dispatch({ type: 'NEXT_CLUE' });
@@ -69,7 +64,6 @@ export default function Game() {
         dispatch({ type: 'ADVANCE_FROM_ROUND_END' });
       }
       if (e.key === 'Escape' && state.phase !== 'board' && state.phase !== 'game_over') {
-        cancelSpeak();
         if (state.phase === 'clue_active' || state.phase === 'answer_input') {
           dispatch({ type: 'TIMEOUT_ANSWER' });
         }
@@ -79,20 +73,6 @@ export default function Game() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  // Voice mode: speak clue when active
-  useEffect(() => {
-    if (mode !== 'voice') return;
-    if (state.phase === 'clue_active' && state.activeClue) {
-      const c = state.activeClue;
-      speak(`The category is ${c.category}, for $${c.value}. ${c.text}`);
-    }
-    if (state.phase === 'fj_active' && state.gameData) {
-      const fj = state.gameData.rounds.finalJeopardy;
-      speak(fj.clue.text);
-    }
-    return () => cancelSpeak();
-  }, [state.phase, state.activeClue, mode, state.gameData]);
-
   // FJ ticker
   useEffect(() => {
     if (state.phase === 'fj_active') {
@@ -101,24 +81,6 @@ export default function Game() {
       return () => tickerRef.current?.stop();
     }
   }, [state.phase]);
-
-  function startListening() {
-    if (!recognizerSupported()) return;
-    if (recognizerRef.current) {
-      try { recognizerRef.current.stop(); } catch {}
-    }
-    const rec = createRecognizer({
-      onResult: (text) => dispatch({ type: 'SET_USER_ANSWER', value: text }),
-      onEnd: (finalText) => {
-        setVoiceListening(false);
-        if (finalText) submitAnswer(finalText);
-      },
-    });
-    if (!rec) return;
-    recognizerRef.current = rec;
-    setVoiceListening(true);
-    rec.start();
-  }
 
   function submitAnswer(text) {
     const clue = state.activeClue;
@@ -265,7 +227,6 @@ export default function Game() {
               ) {
                 return;
               }
-              cancelSpeak();
               tickerRef.current?.stop();
               nav('/play');
             }}
@@ -331,9 +292,6 @@ export default function Game() {
           <ClueOverlay
             state={state}
             dispatch={dispatch}
-            mode={mode}
-            voiceListening={voiceListening}
-            onStartListening={startListening}
             onSubmit={submitAnswer}
             clueSeconds={settings.clueSeconds}
           />
@@ -359,7 +317,6 @@ export default function Game() {
           <FJActive
             state={state}
             dispatch={dispatch}
-            mode={mode}
             onSubmit={submitFJAnswer}
             fjSeconds={settings.fjSeconds}
           />
@@ -425,7 +382,7 @@ function DailyDoubleWager({ state, dispatch }) {
   );
 }
 
-function ClueOverlay({ state, dispatch, mode, voiceListening, onStartListening, onSubmit, clueSeconds }) {
+function ClueOverlay({ state, dispatch, onSubmit, clueSeconds }) {
   const c = state.activeClue;
   const [input, setInput] = useState('');
   const inputRef = useRef(null);
@@ -459,20 +416,13 @@ function ClueOverlay({ state, dispatch, mode, voiceListening, onStartListening, 
               onExpire={() => dispatch({ type: 'TIMEOUT_ANSWER' })}
             />
             <button
-              onClick={() => {
-                dispatch({ type: 'BUZZ_IN' });
-                cancelSpeak();
-                if (mode === 'voice') onStartListening();
-              }}
+              onClick={() => dispatch({ type: 'BUZZ_IN' })}
               className="mt-6 w-full py-4 rounded bg-jgold text-jchrome text-2xl font-bold"
             >
               Buzz In (Space)
             </button>
             <button
-              onClick={() => {
-                cancelSpeak();
-                dispatch({ type: 'TIMEOUT_ANSWER' });
-              }}
+              onClick={() => dispatch({ type: 'TIMEOUT_ANSWER' })}
               className="mt-2 w-full py-2 rounded border border-white/30 text-white/70 hover:text-white text-sm"
             >
               Skip clue (Esc)
@@ -493,15 +443,6 @@ function ClueOverlay({ state, dispatch, mode, voiceListening, onStartListening, 
               placeholder="Your answer…"
               className="w-full text-2xl bg-jblueDeep border border-jgold p-4 rounded text-white"
             />
-            {mode === 'voice' && voiceListening && (
-              <div className="text-center text-jgold">
-                <span className="wave-bar" style={{ animationDelay: '0s' }} />
-                <span className="wave-bar" style={{ animationDelay: '0.1s' }} />
-                <span className="wave-bar" style={{ animationDelay: '0.2s' }} />
-                <span className="wave-bar" style={{ animationDelay: '0.3s' }} />
-                <span className="ml-2 text-sm">listening…</span>
-              </div>
-            )}
             <button className="py-3 rounded bg-jgold text-jchrome font-bold text-xl">
               Submit
             </button>
@@ -608,7 +549,7 @@ function FJWager({ state, dispatch }) {
   );
 }
 
-function FJActive({ state, dispatch, mode, onSubmit, fjSeconds = 30 }) {
+function FJActive({ state, dispatch, onSubmit, fjSeconds = 30 }) {
   const fj = state.gameData.rounds.finalJeopardy;
   const [input, setInput] = useState('');
   const inputRef = useRef(null);

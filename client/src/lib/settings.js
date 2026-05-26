@@ -4,7 +4,6 @@ export const DEFAULTS = {
   clueSeconds: 15,
   fjSeconds: 30,
   autoAdvanceSeconds: 5,
-  voiceRate: 1.0,
 };
 
 export function loadSettings() {

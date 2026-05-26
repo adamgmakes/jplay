@@ -44,16 +44,6 @@ export default function Settings() {
         max={20}
         onChange={(v) => update('autoAdvanceSeconds', v)}
       />
-      <Field
-        label="Voice rate"
-        hint="Speed of the spoken clue in voice mode."
-        value={s.voiceRate}
-        min={0.5}
-        max={2}
-        step={0.1}
-        onChange={(v) => update('voiceRate', v)}
-      />
-
       <button
         onClick={reset}
         className="mt-6 px-4 py-2 rounded border border-jblueDark text-white/70 hover:text-white"
