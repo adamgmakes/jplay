@@ -13,21 +13,6 @@ export default function Auth() {
   const nav = useNavigate();
   const { refreshProfile } = useAuth();
 
-  async function ensureProfile(userId) {
-    const { data: existing } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('id', userId)
-      .maybeSingle();
-    if (!existing) {
-      const uname = username.trim() || `player_${userId.slice(0, 6)}`;
-      const { error } = await supabase
-        .from('profiles')
-        .insert({ id: userId, username: uname });
-      if (error) throw error;
-    }
-  }
-
   async function onSubmit(e) {
     e.preventDefault();
     setLoading(true);
@@ -37,20 +22,23 @@ export default function Auth() {
           toast.error('Pick a username');
           return;
         }
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            data: { username: username.trim() },
+            emailRedirectTo: window.location.origin + '/account',
+          },
         });
         if (error) throw error;
-        if (data.user) await ensureProfile(data.user.id);
+        // Profile is created server-side by the on_auth_user_created trigger.
         toast.success('Account created — check your email to confirm');
       } else if (mode === 'signin') {
-        const { data, error } = await supabase.auth.signInWithPassword({
+        const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         if (error) throw error;
-        if (data.user) await ensureProfile(data.user.id);
         await refreshProfile();
         nav('/play');
       } else {
