@@ -44,6 +44,14 @@ export default function Settings() {
         max={20}
         onChange={(v) => update('autoAdvanceSeconds', v)}
       />
+      <Field
+        label="Play-Along selection delay (seconds)"
+        hint="How long the highlighted next-clue cell shows before the clue opens. Press space to skip."
+        value={s.paHighlightSeconds}
+        min={1}
+        max={20}
+        onChange={(v) => update('paHighlightSeconds', v)}
+      />
       <button
         onClick={reset}
         className="mt-6 px-4 py-2 rounded border border-jblueDark text-white/70 hover:text-white"

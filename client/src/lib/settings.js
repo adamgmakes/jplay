@@ -4,6 +4,7 @@ export const DEFAULTS = {
   clueSeconds: 15,
   fjSeconds: 30,
   autoAdvanceSeconds: 5,
+  paHighlightSeconds: 5,
 };
 
 export function loadSettings() {

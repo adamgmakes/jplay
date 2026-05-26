@@ -23,6 +23,24 @@ export default function Game() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const tickerRef = useRef(null);
+  const [showPaTutorial, setShowPaTutorial] = useState(false);
+
+  // Show play-along tutorial the first time the user enters this mode
+  useEffect(() => {
+    if (mode !== 'playalong' || loading || err) return;
+    try {
+      if (!localStorage.getItem('jplay-pa-tutorial-seen')) {
+        setShowPaTutorial(true);
+      }
+    } catch {}
+  }, [mode, loading, err]);
+
+  function dismissPaTutorial() {
+    try {
+      localStorage.setItem('jplay-pa-tutorial-seen', '1');
+    } catch {}
+    setShowPaTutorial(false);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +93,9 @@ export default function Game() {
       } else if (state.phase === 'round_end' && isSpace) {
         e.preventDefault();
         dispatch({ type: 'ADVANCE_FROM_ROUND_END' });
+      } else if (state.phase === 'pa_highlight' && isSpace) {
+        e.preventDefault();
+        dispatch({ type: 'PA_BEGIN_CLUE' });
       }
       if (e.key === 'Escape' && state.phase !== 'board' && state.phase !== 'game_over') {
         if (state.phase === 'clue_active' || state.phase === 'answer_input') {
@@ -269,12 +290,18 @@ export default function Game() {
       </div>
 
       <main className="flex-1 p-3 sm:p-6 max-w-6xl w-full mx-auto">
+        {showPaTutorial && <PaTutorial onDismiss={dismissPaTutorial} />}
+
         {state.mode === 'playalong' && (
           <ContestantScoreboard state={state} />
         )}
 
         {state.phase === 'pa_highlight' && (
-          <PaHighlight state={state} dispatch={dispatch} />
+          <PaHighlight
+            state={state}
+            dispatch={dispatch}
+            seconds={settings.paHighlightSeconds}
+          />
         )}
 
         {(state.phase === 'board' || state.phase === 'round_end') && (
@@ -513,13 +540,21 @@ function AnswerReveal({ state, dispatch, autoAdvanceSeconds = 5 }) {
       {pa && state.paActiveResponse && (
         <ContestantAttempts sel={state.paActiveResponse} />
       )}
-      <div className="flex gap-3">
+      <div className="flex gap-3 flex-wrap justify-center">
         {!r.correct && (
           <button
             onClick={() => dispatch({ type: 'ACCEPT_ANYWAY' })}
             className="px-5 py-2 rounded border border-jgreen text-jgreen hover:bg-jgreen/10"
           >
             Accept Anyway
+          </button>
+        )}
+        {r.correct && (
+          <button
+            onClick={() => dispatch({ type: 'REJECT_ANYWAY' })}
+            className="px-5 py-2 rounded border border-jred text-jred hover:bg-jred/10"
+          >
+            Reject Anyway
           </button>
         )}
         <button
@@ -639,13 +674,21 @@ function FJReveal({ state, dispatch }) {
       </div>
       <div className="text-white/60 text-sm mb-2">Correct response:</div>
       <div className="font-jeopardy text-jgold text-4xl mb-6">{fj.clue.answer}</div>
-      <div className="flex gap-3 justify-center">
+      <div className="flex gap-3 justify-center flex-wrap">
         {!r.correct && (
           <button
             onClick={() => dispatch({ type: 'FJ_ACCEPT_ANYWAY' })}
             className="px-5 py-2 rounded border border-jgreen text-jgreen hover:bg-jgreen/10"
           >
             Accept Anyway
+          </button>
+        )}
+        {r.correct && (
+          <button
+            onClick={() => dispatch({ type: 'FJ_REJECT_ANYWAY' })}
+            className="px-5 py-2 rounded border border-jred text-jred hover:bg-jred/10"
+          >
+            Reject Anyway
           </button>
         )}
         <button
@@ -697,7 +740,7 @@ function ContestantScoreboard({ state }) {
   );
 }
 
-function PaHighlight({ state, dispatch }) {
+function PaHighlight({ state, dispatch, seconds = 5 }) {
   const sel = state.paQueue[state.paIndex];
   if (!sel || !state.gameData) return null;
   const round =
@@ -709,10 +752,10 @@ function PaHighlight({ state, dispatch }) {
   const picker = sel.attempts[0]?.name || pickerFromPrevious(state) || 'Next';
 
   useEffect(() => {
-    const t = setTimeout(() => dispatch({ type: 'PA_BEGIN_CLUE' }), 1600);
+    const t = setTimeout(() => dispatch({ type: 'PA_BEGIN_CLUE' }), seconds * 1000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.paIndex]);
+  }, [state.paIndex, seconds]);
 
   // Build a faux board with this cell highlighted
   return (
@@ -731,6 +774,9 @@ function PaHighlight({ state, dispatch }) {
         </span>
       </div>
       <PaBoardHighlight round={round} sel={sel} revealedClues={state.revealedClues} />
+      <div className="mt-4 text-center text-white/50 text-xs">
+        Press <kbd className="px-1.5 py-0.5 rounded bg-jblueDark text-white/80">Space</kbd> to continue (auto-advances in {seconds}s)
+      </div>
     </div>
   );
 }
@@ -818,6 +864,30 @@ function ContestantAttempts({ sel }) {
       {sel.isTripleStumper && sel.attempts.length > 0 && (
         <div className="mt-1 text-jred text-xs">Triple stumper.</div>
       )}
+    </div>
+  );
+}
+
+
+function PaTutorial({ onDismiss }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/75 flex items-center justify-center px-4">
+      <div className="max-w-lg w-full bg-jchrome border border-jgold rounded-lg p-6">
+        <div className="font-jeopardy text-3xl text-jgold mb-3">How Play Along works</div>
+        <ol className="space-y-3 text-sm text-white/85 list-decimal pl-5">
+          <li>The board appears with all 3 contestants and you on a running scoreboard at the top.</li>
+          <li>Each clue is highlighted on the board in the same order it was selected on the real show. You get ~5 seconds to take it in &mdash; or press <kbd className="px-1 rounded bg-jblueDark">Space</kbd> to jump straight into the clue.</li>
+          <li>Answer like normal. <span className="text-jgold">Accept Anyway</span> / <span className="text-jred">Reject Anyway</span> let you override the judge.</li>
+          <li>After your result, the &ldquo;In the real game&rdquo; panel reveals who buzzed in and what they said. Contestant scores update by the real outcome; yours updates by what you typed.</li>
+          <li>Daily Doubles: the real contestant who got it had their own wager &mdash; you place yours separately for your score.</li>
+        </ol>
+        <button
+          onClick={onDismiss}
+          className="mt-5 w-full py-3 rounded bg-jgold text-jchrome font-bold"
+        >
+          Got it &mdash; let&apos;s play
+        </button>
+      </div>
     </div>
   );
 }
