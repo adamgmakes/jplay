@@ -262,6 +262,50 @@ export function reducer(state, action) {
       };
     }
 
+    case 'REJECT_ANYWAY': {
+      const clue = state.activeClue;
+      if (!clue || !state.lastAnswerResult) return state;
+      const prev = state.lastAnswerResult;
+      if (!prev.correct) return state; // already wrong
+      const isDD = clue.isDailyDouble;
+      const wagerValue = isDD ? state.wager : clue.value;
+      // Reverse the gain, then apply a wrong-answer penalty.
+      const newScore = state.score - prev.delta - wagerValue;
+      const coryatLoss = isDD ? 0 : clue.value;
+      const cat = clue.category || 'Unknown';
+      const cr = state.categoryResults[cat] || { correct: 0, incorrect: 0 };
+      return {
+        ...state,
+        score: newScore,
+        coryatScore: state.coryatScore - coryatLoss,
+        cluesCorrect: Math.max(0, state.cluesCorrect - 1),
+        cluesIncorrect: state.cluesIncorrect + 1,
+        cluesAcceptedOverride: Math.max(0, state.cluesAcceptedOverride - (prev.override ? 1 : 0)),
+        dailyDoublesCorrect: state.dailyDoublesCorrect - (isDD ? 1 : 0),
+        lastAnswerResult: { ...prev, correct: false, override: true, delta: -wagerValue },
+        categoryResults: {
+          ...state.categoryResults,
+          [cat]: {
+            correct: Math.max(0, cr.correct - 1),
+            incorrect: cr.incorrect + 1,
+          },
+        },
+      };
+    }
+
+    case 'FJ_REJECT_ANYWAY': {
+      const prev = state.lastAnswerResult;
+      if (!prev || !prev.correct) return state;
+      const newScore = state.score - prev.delta - state.finalJeopardyWager;
+      return {
+        ...state,
+        score: newScore,
+        finalJeopardyCorrect: false,
+        cluesAcceptedOverride: Math.max(0, state.cluesAcceptedOverride - (prev.override ? 1 : 0)),
+        lastAnswerResult: { ...prev, correct: false, override: true, delta: -state.finalJeopardyWager },
+      };
+    }
+
     case 'ACCEPT_ANYWAY': {
       const clue = state.activeClue;
       if (!clue || !state.lastAnswerResult) return state;
